@@ -1,0 +1,5 @@
+[requires]
+xmlrcp-c/1.39.12@sztomi/testing
+
+[generators]
+cmake
