@@ -1,5 +1,7 @@
 [requires]
-xmlrcp-c/1.39.12@sztomi/testing
+xmlrpc-c/1.39.12@sztomi/testing
 
 [generators]
 cmake
+txt
+
