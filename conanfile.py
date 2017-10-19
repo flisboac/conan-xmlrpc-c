@@ -1,9 +1,10 @@
-from conans import ConanFile, tools
+from conans import ConanFile, tools, AutoToolsBuildEnvironment
 import os
 import platform
 
 deps = (
     { 'name': 'libcurl', 'version': '7.50.3', 'user': 'lasote', 'channel': 'stable' },
+    { 'name': 'OpenSSL', 'version': '1.0.2i', 'user': 'lasote', 'channel': 'stable' },
 )
 
 CONAN_PACKAGE_USER = os.getenv('CONAN_USER', '') or 'flisboac'
@@ -18,11 +19,20 @@ def to_full_package_name(dep):
         dep.get('channel', CONAN_PACKAGE_CHANNEL)
     )
 
+
 def get_dep(name):
     for dep in deps:
         if dep['name'] == name: return dep
 
-class ConanPackageBase(ConanFile):
+
+def merge_dicts(*dict_args):
+    result = {}
+    for dictionary in dict_args:
+        result.update(dictionary)
+    return result
+
+
+class ConanPackage(ConanFile):
 
     short_paths = True
     build_policy = "missing"
@@ -42,8 +52,11 @@ class ConanPackageBase(ConanFile):
     fullname = '{}/{}@{}/{}'.format(name, version, user, channel)
     dirname = 'xmlrpc-c-{}'.format(version)
     requires = tuple(to_full_package_name(dep) for dep in deps)
-    default_options = ('libcurl:shared=False',)
-    exports_sources = "*.in"
+    options = { 
+        "shared": [True, False], 
+        "feature": ["all", "client", "server", "client_v1", "server_v1"]
+    }
+    default_options = ('shared=False', 'feature=all', 'libcurl:shared=False',)
 
     def source(self):
         tools.download(self.tarball_url, self.tarball_name)
@@ -51,27 +64,10 @@ class ConanPackageBase(ConanFile):
         self.exports_sources.append("*.in")
 
     def package_info(self):
-        self.cpp_info.libs = [
-            'xmlrpc_server_cgi++',
-            'xmlrpc_server_abyss++',
-            'xmlrpc_util++',
-            'xmlrpc_packetsocket',
-            'xmlrpc_server_pstream++',
-            'xmlrpc',
-            'xmlrpc_server++',
-            'xmlrpc_server_abyss',
-            'xmlrpc_server_cgi',
-            'xmlrpc_xmlparse',
-            'xmlrpc_server',
-            'xmlrpc_abyss++',
-            'xmlrpc_abyss',
-            'xmlrpc_xmltok',
-            'xmlrpc++',
-            'xmlrpc_client',
-            'xmlrpc_client++',
-            'xmlrpc_util',
-            'xmlrpc_cpp'
-        ]
+        self.cpp_info.libs = tools.collect_libs(self)
+
+    def get_curl_config_location(self):
+        return self.join_path(self.conanfile_directory, "curl-config")
 
     def get_helper(self):
         if not hasattr(self, 'helper'):
@@ -99,6 +95,7 @@ class ConanPackageBase(ConanFile):
     def replace_in_file(self, *args, **kargs):
         return tools.replace_in_file(*args, **kargs)
 
+
 # TODO
 class ConanPackageHelper_Msvc(object):
 
@@ -124,35 +121,39 @@ class ConanPackageHelper_Autotools(object):
 
     def build(self):
         os.chdir(self.conan_file.dirname)
-        for p, v in vars(self.conan_file.deps_cpp_info['libcurl']).items():
-            print(p, ": ", v)
+        
+        if self.conan_file.settings.build_type == "Debug":
+            # TODO Check how I can include a debug configuration in this case (e.g. a portable -g?)
+            pass
+
         generate_curl_config(self.conan_file)
-        print("Generated curl_config!")
-        #curl_config = '"{}/curl-config"'.format(self.conan_file.deps_cpp_info['libcurl']._bin_paths[0])
-        curl_config = '"{}/curl-config"'.format(self.conan_file.rootpath)
-        #self.conan_file.run('chmod +x {}'.format(curl_config))
-        self.conan_file.run('CPPFLAGS=-I{} LDFLAGS=-L{} CURL_CONFIG={} bash -c "./configure --enable-curl-client"'.format(
-            self.conan_file.deps_cpp_info['libcurl'].include_paths[0],
-            self.conan_file.deps_cpp_info['libcurl'].lib_paths[0],
-            curl_config
-            )
-        )
-        # without this, the makefile won't find the curl-config from the libcurl pkg
-        tools.replace_in_file('lib/curl_transport/Makefile', 'shell curl-config', 'shell ' + curl_config)
-        self.conan_file.run('make')
+
+        env_build = AutoToolsBuildEnvironment(self.conan_file)
+        curl_config = self.conan_file.get_curl_config_location()
+        env_vars = merge_dicts(env_build.vars, { 'CURL_CONFIG': curl_config })
+
+        configure_options = "--enable-curl-client"
+
+        with tools.environment_append(env_vars):
+            self.conan_file.run(r'./configure {}'.format(configure_options))
+            tools.replace_in_file(r'lib/curl_transport/Makefile', 'shell curl-config', 'shell "{}"'.format(curl_config))
+            self.conan_file.run('make')
 
     def package(self):
-        if platform.system() == 'Linux':
-            build_dir = os.path.abspath('{}/../../build'.format(self.conan_file.package_folder))
+        if self.conan_file.settings.os == 'Linux':
+            build_dir = os.path.abspath(r'{}/../../build'.format(self.conan_file.package_folder))
             self.conan_file.run('find {} -xtype l -delete'.format(build_dir))
             self.conan_file.run('find {} -name "{}" -delete'.format(build_dir, 'blddir'))
             self.conan_file.run('find {} -name "{}" -delete'.format(build_dir, 'srcdir'))
+
         self.conan_file.copy('*.h', src='{}/{}'.format(self.conan_file.dirname, 'include'), dst='include')
         self.conan_file.copy('*.hpp', src='{}/{}'.format(self.conan_file.dirname, 'include'), dst='include')
+        
         self.conan_file.copy('*.so', dst='lib', keep_path=False)
         self.conan_file.copy('*.dll', dst='lib', keep_path=False)
         self.conan_file.copy('*.lib', dst='lib', keep_path=False)
         self.conan_file.copy('*.a', dst='lib', keep_path=False)
+
 
 class ConanPackageHelper_Mingw(object):
     
@@ -192,10 +193,13 @@ class ConanPackageHelper_Mingw(object):
     def package(self):
         self.conan_file.copy('*.h', src='{}/{}'.format(self.conan_file.dirname, 'include'), dst='include')
         self.conan_file.copy('*.hpp', src='{}/{}'.format(self.conan_file.dirname, 'include'), dst='include')
-        self.conan_file.copy('*.so', dst='lib', keep_path=False)
-        self.conan_file.copy('*.dll', dst='lib', keep_path=False)
-        self.conan_file.copy('*.lib', dst='lib', keep_path=False)
-        self.conan_file.copy('*.a', dst='lib', keep_path=False)
+
+        if self.conan_file.options.shared:
+            self.conan_file.copy('*.so', dst='lib', keep_path=False)
+            self.conan_file.copy('*.dll', dst='lib', keep_path=False)
+        else:
+            self.conan_file.copy('*.lib', dst='lib', keep_path=False)
+            self.conan_file.copy('*.a', dst='lib', keep_path=False)
 
 
 def get_curl_versionnum(version):
@@ -215,7 +219,7 @@ def generate_curl_config(conan_file):
     # Gathering data
     project_rootpath = conan_file.cpp_info.rootpath
     src_path = conan_file.join_path(project_rootpath, "curl-config.in")
-    dst_path = conan_file.join_path(conan_file.conanfile_directory, "curl-config")
+    dst_path = conan_file.get_curl_config_location()
     libcurl_info = conan_file.deps_cpp_info['libcurl']
     libcurl_dep_info = get_dep('libcurl')
     libcurl_rootpath = libcurl_info.rootpath
