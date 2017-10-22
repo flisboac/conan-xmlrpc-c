@@ -21,7 +21,7 @@ using namespace std;
 #define SLEEP(seconds) sleep(seconds);
 #endif
 
-class sampleAddMethod : public xmlrpc_c::method {
+class sampleAddMethod : public xmlrpc_c::method  {
 public:
   sampleAddMethod() {
     // signature and help strings are documentation -- the client
@@ -54,7 +54,8 @@ int main(int const, const char **const) {
 
     xmlrpc_c::methodPtr const sampleAddMethodP(new sampleAddMethod);
 
-    myRegistry.addMethod("sample.add", sampleAddMethodP);
+	std::string const methodName = "sample.add";
+    myRegistry.addMethod(methodName, sampleAddMethodP);
 
     xmlrpc_c::serverAbyss myAbyssServer(xmlrpc_c::serverAbyss::constrOpt()
                                             .registryP(&myRegistry)
